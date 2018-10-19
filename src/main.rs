@@ -24,13 +24,19 @@ struct Message {
   bpm: i32,
 }
 
+#[derive(Deserialize, Serialize)]
+struct Response {
+  status: i32,
+  message: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct Block {
   index: i32,
   timestamp: String,
   bpm: i32,
   hash: String,
-  prev_hash: Option<String>,
+  prev_hash: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -47,64 +53,49 @@ fn hash(input: String) -> String {
 }
 
 impl Block {
-  fn new(previous: Option<Block>, bpm: i32) -> Block {
+  fn new() -> Block {
     let now_time = SystemTime::now();
     let datetime: DateTime<Utc> = now_time.into();
 
-    match previous {
-      Some(previous_block) => {
-        let mut block = Block {
-          index: previous_block.index + 1,
-          timestamp: datetime.format("(%d/%m/%Y %T)").to_string(),
-          bpm: bpm,
-          hash: String::from(""),
-          prev_hash: Some(previous_block.hash),
-        };
-        block.set_hash(block.calculate_hash());
-        return block;
-      },
-      None => {
-        let mut block = Block {
-          index: 0,
-          timestamp: datetime.format("(%d/%m/%Y %T)").to_string(),
-          bpm: bpm,
-          hash: "".to_string(),
-          prev_hash: None,
-        };
-        block.set_hash(block.calculate_hash());
-        return block;
-      }
-    }
+    return Block {
+      index: 0,
+      timestamp: datetime.format("(%d/%m/%Y %T)").to_string(),
+      bpm: 0,
+      hash: String::from(""),
+      prev_hash:String::from(""),
+    };
+  }
+
+  fn new_block(previous: &Block, bpm: i32) -> Block {
+    let now_time = SystemTime::now();
+    let datetime: DateTime<Utc> = now_time.into();
+
+    let mut block = Block {
+      index: previous.index + 1,
+      timestamp: datetime.format("(%d/%m/%Y %T)").to_string(),
+      bpm: bpm,
+      hash: String::from(""),
+      prev_hash: previous.hash.to_owned(),
+    };
+    block.set_hash(block.calculate_hash());
+    return block;
 
   }
   fn calculate_hash(&self) -> String {
-    match self.prev_hash {
-      Some(ref previous_hash) => {
-        let record = format!("{}{}{}{}", self.index, self.timestamp, self.bpm, previous_hash);
-        return hash(record);
-      }
-      None => {
-        let record = format!("{}{}{}", self.index, self.timestamp, self.bpm);
-        return hash(record);
-      }
-    }
+    let record = format!("{}{}{}{}", self.index, self.timestamp, self.bpm, self.prev_hash);
+    return hash(record);
   }
 
-  fn is_valid_block(&self, old_block: Block) -> bool {
+  fn is_valid_block(&self, old_block: &Block) -> bool {
     if old_block.index+1 != self.index {
       return false;
     }
 
-    let prev_hash: String;
-    match self.prev_hash {
-      Some(ref previous_hash) => prev_hash = previous_hash.to_string(),
-      None => prev_hash = String::from(""),
-    }
-    if old_block.hash != prev_hash {
+    if old_block.hash != self.prev_hash {
       return false;
     }
 
-    if &self.calculate_hash() != &self.hash {
+    if self.calculate_hash() != self.hash {
       return false;
     }
 
@@ -113,12 +104,6 @@ impl Block {
 
   fn set_hash(&mut self, hash: String) {
     self.hash = hash;
-  }
-}
-
-fn replace_chain(new_blocks: Vec<Block>, mut blocks: Vec<Block>) {
-  if new_blocks.len() > blocks.len() {
-    blocks = new_blocks;
   }
 }
 
@@ -133,27 +118,38 @@ fn handle_get_blockchain(chain: State<BlockchainMutex>) -> Option<Json<Vec<Block
 #[post("/", format = "application/json", data="<message>")]
 fn handle_write_block(message: Json<Message>, chain: State<BlockchainMutex>) -> Option<Json<Vec<Block>>> {
   let mut bc = chain.lock().unwrap();
-  let last_block = (&bc.chain).last().cloned();
-  let new_block = Block::new(last_block, message.bpm);
-  //if new_block.is_valid_block(old_block: Block)
-  bc.chain.push(new_block);
-  let my_json = Json(bc.chain.to_vec());
-  return Some(my_json);
+  let last_block = (&bc.chain).last().unwrap().clone();
+  let new_block = Block::new_block(&last_block, message.bpm);
+
+  if new_block.is_valid_block(&last_block) {
+    let mut new_chain = bc.chain.to_vec();
+    new_chain.push(new_block);
+
+    // Also chose the longer chain.
+    if new_chain.len() > bc.chain.len() {
+      bc.chain = new_chain;
+    }
+
+    let my_json = Json(bc.chain.to_vec());
+    return Some(my_json);
+  };
+
+  return None;
 }
 
-// #[catch(404)]
-// fn not_found() -> JsonValue {
-//     json!({
-//         "status": "error",
-//         "reason": "Resource was not found."
-//     })
-// }
+#[catch(404)]
+fn not_found(_req: &rocket::Request) -> Json<Response> {
+    Json(Response {
+        status: 404,
+        message: String::from("Page not found."),
+    })
+}
 
 fn main() {
 
   rocket::ignite()
-    .manage(Mutex::new(Blockchain { chain: Vec::new() }))
-    //.register(catchers![])
+    .manage(Mutex::new(Blockchain { chain: vec![Block::new()] }))
+    .catch(catchers![not_found])
     .mount("/", routes![handle_get_blockchain, handle_write_block])
     .launch();
 }
