@@ -1,0 +1,18 @@
+[package]
+name = "rsbc"
+version = "0.1.0"
+authors = ["jonathanpavlik"]
+edition = "2018"
+
+[dependencies]
+chrono = "0.4.6"
+rust-crypto = "0.2.36"
+rocket = "0.3.17"
+rocket_codegen = "0.3.17"
+serde_derive = "1.0.80"
+serde = "1.0.80"
+
+[dependencies.rocket_contrib]
+version = "*"
+default-features = false
+features = ["json"]
