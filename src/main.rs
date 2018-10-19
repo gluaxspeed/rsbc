@@ -9,7 +9,7 @@ extern crate rocket_contrib;
 #[macro_use] extern crate serde_derive;
 
 
-use std::ops::Deref;
+//use std::ops::Deref;
 use std::sync::Mutex;
 use chrono::offset::Utc;
 use chrono::{DateTime};
@@ -40,6 +40,12 @@ struct Blockchain {
 
 type BlockchainMutex = Mutex<Blockchain>;
 
+fn hash(input: String) -> String {
+  let mut sha = Sha256::new();
+  sha.input_str(&input);
+  return sha.result_str();
+}
+
 impl Block {
   fn new(previous: Option<Block>, bpm: i32) -> Block {
     let now_time = SystemTime::now();
@@ -47,36 +53,41 @@ impl Block {
 
     match previous {
       Some(previous_block) => {
-        return Block {
+        let mut block = Block {
           index: previous_block.index + 1,
           timestamp: datetime.format("(%d/%m/%Y %T)").to_string(),
           bpm: bpm,
-          hash: previous_block.calculate_hash(),
+          hash: String::from(""),
           prev_hash: Some(previous_block.hash),
         };
+        block.set_hash(block.calculate_hash());
+        return block;
       },
       None => {
-        return Block {
+        let mut block = Block {
           index: 0,
           timestamp: datetime.format("(%d/%m/%Y %T)").to_string(),
           bpm: bpm,
           hash: "".to_string(),
           prev_hash: None,
-        }
+        };
+        block.set_hash(block.calculate_hash());
+        return block;
       }
     }
 
   }
   fn calculate_hash(&self) -> String {
-    let record: String;
     match self.prev_hash {
-      Some(ref previous_hash) => record = format!("{}{}{}{}", self.index, self.timestamp, self.bpm, previous_hash),
-      None => record = format!("{}{}{}", self.index, self.timestamp, self.bpm),
+      Some(ref previous_hash) => {
+        let record = format!("{}{}{}{}", self.index, self.timestamp, self.bpm, previous_hash);
+        return hash(record);
+      }
+      None => {
+        let record = format!("{}{}{}", self.index, self.timestamp, self.bpm);
+        return hash(record);
+      }
     }
-    println!("{}", record);
-    let mut sha = Sha256::new();
-    sha.input_str(&record);
-    return sha.result_str();
   }
 
   fn is_valid_block(&self, old_block: Block) -> bool {
@@ -99,6 +110,10 @@ impl Block {
 
     return true;
   }
+
+  fn set_hash(&mut self, hash: String) {
+    self.hash = hash;
+  }
 }
 
 fn replace_chain(new_blocks: Vec<Block>, mut blocks: Vec<Block>) {
@@ -118,7 +133,8 @@ fn handle_get_blockchain(chain: State<BlockchainMutex>) -> Option<Json<Vec<Block
 #[post("/", format = "application/json", data="<message>")]
 fn handle_write_block(message: Json<Message>, chain: State<BlockchainMutex>) -> Option<Json<Vec<Block>>> {
   let mut bc = chain.lock().unwrap();
-  let new_block = Block::new(None, message.bpm);
+  let last_block = (&bc.chain).last().cloned();
+  let new_block = Block::new(last_block, message.bpm);
   //if new_block.is_valid_block(old_block: Block)
   bc.chain.push(new_block);
   let my_json = Json(bc.chain.to_vec());
